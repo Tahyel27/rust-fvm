@@ -87,7 +87,7 @@ impl eframe::App for App {
                     let desired_width = ui.available_width().min(200.);
 
                     ui.spacing_mut().slider_width = desired_width;
-                    if ui.add(egui::Slider::new(&mut self.params.dt, 0.0..=0.7).text("dt")).changed() {
+                    if ui.add(egui::Slider::new(&mut self.params.dt, 0.0..=0.25).text("dt")).changed() {
                         self.sim.update_params(|p| p.dt = self.params.dt);
                     }
 
