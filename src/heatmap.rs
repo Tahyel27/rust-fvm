@@ -1,6 +1,6 @@
 use crate::colormap::Colormap;
 
-use eframe::egui::{self, Response, TextureHandle, Vec2};
+use eframe::egui::{self, Response, TextureHandle, TextureOptions, Vec2};
 use egui_plot::{Plot, PlotImage, PlotPoint, PlotResponse};
 use ndarray::Array2;
 use num::Float;
@@ -123,7 +123,7 @@ fn data_to_texture<CMAP: Colormap, N: Float>(data: &Array2<N>, ctx: &egui::Conte
 
     let image = egui::ColorImage::new([rows, cols], pixels);
 
-    ctx.load_texture("heatmap_texture", image,  Default::default())
+    ctx.load_texture("heatmap_texture", image,  TextureOptions::NEAREST)
 }
 
 fn create_mask(mask: &Array2<u8>, ctx: &egui::Context) -> TextureHandle {

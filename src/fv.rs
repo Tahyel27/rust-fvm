@@ -1,17 +1,28 @@
 use ndarray::{s, Array2};
+use serde::{Deserialize, Serialize};
 
-use crate::simhandler::SimulationData;
+use crate::{fvgeometry::{FVGeometry, FVWalls}, simhandler::SimulationData};
+
+#[derive(Clone)]
+pub enum Boundary {
+    Absorb,
+    Slip,
+    NoSlip,
+    Tunnel
+}
 
 #[derive(Clone)]
 pub struct FVParams {
-    pub dt: f64
+    pub dt: f64,
+    pub domain_boundary: Boundary,
+    pub domain: FVDomain
 }
 
-#[derive(Default)]
-struct FVFields {
-    h: Array2<f64>,
-    hu: Array2<f64>,
-    hv: Array2<f64>
+#[derive(Default, Clone)]
+pub struct FVFields {
+    pub h: Array2<f64>,
+    pub hu: Array2<f64>,
+    pub hv: Array2<f64>
 }
 
 #[derive(Default)]
@@ -28,11 +39,14 @@ pub struct FVData {
     q_slopes_y: FVSlopes,
     flux_x: FVFields,
     flux_y: FVFields,
+    buffer: Array2<f64>,
+    walls: FVGridWalls,
+    wallsg: FVWalls
 }
 
 impl Default for FVParams {
     fn default() -> Self {
-        Self { dt: 0.15 }
+        Self { dt: 0.1, domain_boundary: Boundary::Tunnel, domain: Default::default() }
     }
 }
 
@@ -45,11 +59,14 @@ impl FVData {
             q_slopes_x: FVSlopes { h: z.clone(), hu: z.clone(), hv: z.clone() },
             q_slopes_y: FVSlopes { h: z.clone(), hu: z.clone(), hv: z.clone() },
             flux_x: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
-            flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() }
+            flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
+            buffer: z.clone(),
+            walls: Default::default(),
+            wallsg: Default::default()
         }
     }
 
-    pub fn new_case(h: Array2<f64>, hu: Array2<f64>, hv: Array2<f64>) -> Self {
+    pub fn new_case(h: Array2<f64>, hu: Array2<f64>, hv: Array2<f64>, mask: Array2<u8>) -> Self {
         let z = Array2::<f64>::zeros(h.dim());
 
         Self {
@@ -58,10 +75,32 @@ impl FVData {
             q_slopes_y: FVSlopes { h: z.clone(), hu: z.clone(), hv: z.clone() },
             flux_x: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
+            buffer: z.clone(),
+            walls: mask.into(),
+            wallsg: Default::default()
+        }
+    }
+
+    pub fn new_case_geom(h: Array2<f64>, hu: Array2<f64>, hv: Array2<f64>, geometry: FVGeometry) -> Self {
+        let z = Array2::<f64>::zeros(h.dim());
+
+        let wallsg = FVWalls::new(geometry, z.dim());
+
+        Self {
+            q: FVFields { h, hu, hv },
+            q_slopes_x: FVSlopes { h: z.clone(), hu: z.clone(), hv: z.clone() },
+            q_slopes_y: FVSlopes { h: z.clone(), hu: z.clone(), hv: z.clone() },
+            flux_x: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
+            flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
+            buffer: z.clone(),
+            walls: Default::default(),
+            wallsg: wallsg
         }
     }
 
     pub fn add_to_h(&mut self, h: Array2<f64>) { self.q.h += &h; }
+
+    pub fn add_to_hu(&mut self, hu: Array2<f64>) {self.q.hu += &hu; }
 
     pub fn set_fields(&mut self, h: Array2<f64>, hu: Array2<f64>, hv: Array2<f64>) {
         self.q.h = h;
@@ -69,7 +108,93 @@ impl FVData {
         self.q.hv = hv;
     }
 
+    pub fn clone_fields(&self) -> FVFields {
+        self.q.clone()
+    }
+
     pub fn dim(&self) -> (usize, usize) {self.q.h.dim()}
+
+    fn wall_bc(&mut self) {
+        let (dimx, dimy) = self.q.h.dim();
+        
+        let mx = dimx - 1;
+        let my = dimy - 1;
+        //left/right edge
+        for i in 0..dimy {
+            self.q.h[[0,i]] = self.q.h[[1,i]];
+            self.q.hv[[0,i]] = self.q.hv[[1,i]];
+            self.q.hu[[0,i]] = -1. * self.q.hu[[1,i]];
+
+            self.q.h[[mx,i]] = self.q.h[[mx-1,i]];
+            self.q.hu[[mx,i]] = -1. * self.q.hu[[mx-1,i]];
+            self.q.hv[[mx,i]] = self.q.hv[[mx-1,i]];
+        }
+
+        for i in 0..dimx {
+            self.q.h[[i,0]] = self.q.h[[i,1]];
+            self.q.hu[[i,0]] = self.q.hu[[i,1]];
+            self.q.hv[[i,0]] = -1. * self.q.hv[[i,1]];
+
+            self.q.h[[i,my]] = self.q.h[[i,my-1]];
+            self.q.hu[[i,my]] = self.q.hu[[i,my-1]];
+            self.q.hv[[i,my]] = -1. * self.q.hv[[i,my-1]];
+        }
+
+    }
+
+    fn open_bc(&mut self) {
+        let (dimx, dimy) = self.q.h.dim();
+        
+        let mx = dimx - 1;
+        let my = dimy - 1;
+        //left/right edge
+        for i in 0..dimy {
+            self.q.h[[0,i]] = self.q.h[[1,i]];
+            self.q.hv[[0,i]] = self.q.hv[[1,i]];
+            self.q.hu[[0,i]] = self.q.hu[[1,i]];
+
+            self.q.h[[mx,i]] = self.q.h[[mx-1,i]];
+            self.q.hu[[mx,i]] = self.q.hu[[mx-1,i]];
+            self.q.hv[[mx,i]] = self.q.hv[[mx-1,i]];
+        }
+
+        for i in 0..dimx {
+            self.q.h[[i,0]] = self.q.h[[i,1]];
+            self.q.hu[[i,0]] = self.q.hu[[i,1]];
+            self.q.hv[[i,0]] = self.q.hv[[i,1]];
+
+            self.q.h[[i,my]] = self.q.h[[i,my-1]];
+            self.q.hu[[i,my]] = self.q.hu[[i,my-1]];
+            self.q.hv[[i,my]] = self.q.hv[[i,my-1]];
+        }
+    }
+
+    fn tunnel_bc(&mut self) {
+        let (dimx, dimy) = self.q.h.dim();
+        
+        let mx = dimx - 1;
+        let my = dimy - 1;
+        //left/right edge
+        for i in 0..dimy {
+            self.q.h[[0,i]] = self.q.h[[1,i]];
+            self.q.hv[[0,i]] = self.q.hv[[1,i]];
+            self.q.hu[[0,i]] = 0.5;
+
+            self.q.h[[mx,i]] = self.q.h[[mx-1,i]];
+            self.q.hu[[mx,i]] = self.q.hu[[mx-1,i]];
+            self.q.hv[[mx,i]] = self.q.hv[[mx-1,i]];
+        }
+
+        for i in 0..dimx {
+            self.q.h[[i,0]] = self.q.h[[i,1]];
+            self.q.hu[[i,0]] = self.q.hu[[i,1]];
+            self.q.hv[[i,0]] = self.q.hv[[i,1]];
+
+            self.q.h[[i,my]] = self.q.h[[i,my-1]];
+            self.q.hu[[i,my]] = self.q.hu[[i,my-1]];
+            self.q.hv[[i,my]] = self.q.hv[[i,my-1]];
+        }
+    }
 
 }
 
@@ -93,6 +218,37 @@ fn reconstruct_slopes(q: &Array2<f64>, q_sl_x: &mut Array2<f64>, q_sl_y: &mut Ar
             *sl_y = minmod(y_forw, y_back);
         });
 
+}
+
+fn reconstruct_slopes_x(q: &Array2<f64>, q_sl_x: &mut Array2<f64>) {
+    let q_windows = q.windows((3,3));
+
+    let mut q_sl_x_slice = q_sl_x.slice_mut(s![1..-1,1..-1]);
+
+    ndarray::Zip::from(q_windows)
+        .and(&mut q_sl_x_slice)
+        .par_for_each(|qwin, sl_x| {
+            let x_forw = qwin[[2,1]] - qwin[[1,1]];
+            let x_back = qwin[[1,1]] - qwin[[0,1]];
+
+            *sl_x = minmod(x_forw, x_back);
+        });
+}
+
+fn reconstruct_slopes_y(q: &Array2<f64>, q_sl_y: &mut Array2<f64>) {
+    let q_windows = q.windows((3,3));
+
+    let mut q_sl_y_slice = q_sl_y.slice_mut(s![1..-1,1..-1]);
+
+    ndarray::Zip::from(q_windows)
+        .and(q_sl_y_slice)
+        .par_for_each(|qwin, sl_y| {
+            let y_forw = qwin[[1,2]] - qwin[[1,1]];
+            let y_back = qwin[[1,1]] - qwin[[1,0]];
+
+            *sl_y = minmod(y_forw, y_back);
+        });
+    
 }
 
 fn calc_flux_horizontal(q: &FVFields, q_sl_x: &FVSlopes, f_x: &mut FVFields) {
@@ -190,7 +346,7 @@ fn calc_flux_vertical(q: &FVFields, q_sl_y: &FVSlopes, f_y: &mut FVFields) {
         });
 }
 
-fn euler_step(q: &mut Array2<f64>, f_x: &Array2<f64>, f_y: &Array2<f64>, dt: f64) {
+fn euler_step(q: &mut Array2<f64>, f_x: &Array2<f64>, f_y: &Array2<f64>, dt: f64, mask: &Array2<f64>) {
     let f_x_slice = f_x.slice(s![0..-1,1..-1]);
     let f_y_slice = f_y.slice(s![1..-1,0..-1]);
 
@@ -200,11 +356,20 @@ fn euler_step(q: &mut Array2<f64>, f_x: &Array2<f64>, f_y: &Array2<f64>, dt: f64
     ndarray::Zip::from(q.slice_mut(s![1..-1,1..-1]))
         .and(f_x_wins)
         .and(f_y_wins)
-        .par_for_each(|u, f_xw, f_yw| {
+        .and(mask.slice(s![1..-1,1..-1]))
+        .par_for_each(|u, f_xw, f_yw, m| {
             let f_x_l = f_xw[[0,0]]; let f_x_r = f_xw[[1,0]];
             let f_y_b = f_yw[[0,0]]; let f_y_t = f_yw[[0,1]];
 
-            *u = *u + dt*(f_x_l - f_x_r + f_y_b - f_y_t);
+            *u = *u + m * dt*(f_x_l - f_x_r + f_y_b - f_y_t);
+        });
+}
+
+fn mask_field(u: &mut Array2<f64>, mask: &Array2<f64>) {
+    ndarray::Zip::from(u)
+        .and(mask)
+        .par_for_each(|u, mask| {
+            *u = mask * *u;
         });
 }
 
@@ -283,6 +448,22 @@ fn van_leer(a: f64, b: f64) -> f64 {
     (a.abs() * b + b.abs() * a) / (ab_abs + epsilon)
 }
 
+fn dissipation(u: &mut Array2<f64>, buffer: &mut Array2<f64>, c: f64, dt: f64) {
+    let uwins = u.windows((3,3));
+    
+    ndarray::Zip::from(buffer.slice_mut(s![1..-1,1..-1]))
+        .and(uwins)
+        .par_for_each(|buf, uw| {
+            *buf = -4. * uw[[1,1]] + uw[[0,1]] + uw[[2,1]] + uw[[1,2]] + uw[[1,0]];
+        });
+    
+    ndarray::Zip::from(u.slice_mut(s![1..-1,1..-1]))
+        .and(buffer.slice_mut(s![1..-1,1..-1]))
+        .par_for_each(|u, buf| {
+            *u = *u + *buf * dt * c;
+        });
+}
+
 impl SimulationData for FVData {
     type SimParams = FVParams;
 
@@ -295,7 +476,7 @@ impl SimulationData for FVData {
         let q_sl_x = &mut self.q_slopes_x;
         let q_sl_y = &mut self.q_slopes_y;
 
-        reconstruct_slopes(&q.h, &mut q_sl_x.h, &mut q_sl_y.h);
+        /*reconstruct_slopes(&q.h, &mut q_sl_x.h, &mut q_sl_y.h);
         reconstruct_slopes(&q.hu, &mut q_sl_x.hu, &mut q_sl_y.hu);
         reconstruct_slopes(&q.hv, &mut q_sl_x.hv, &mut q_sl_y.hv);
 
@@ -305,10 +486,341 @@ impl SimulationData for FVData {
         euler_step(&mut q.h, &self.flux_x.h, &self.flux_y.h, dt);
         euler_step(&mut q.hu, &self.flux_x.hu, &self.flux_y.hu, dt);
         euler_step(&mut q.hv, &self.flux_x.hv, &self.flux_y.hv, dt);
+
+        self.walls.apply_x_walls(&mut q.h, &mut q.hu, &mut q.hv);
+        self.walls.apply_y_walls(&mut q.h, &mut q.hv, &mut q.hu);*/
+
+        reconstruct_slopes_x(&q.h, &mut q_sl_x.h);
+        reconstruct_slopes_x(&q.hu, &mut q_sl_x.hu);
+        reconstruct_slopes_x(&q.hv, &mut q_sl_x.hv);
+
+        //self.walls.apply_x_walls(&mut q.h, &mut q.hu, &mut q.hv);
+
+        calc_flux_horizontal(q, q_sl_x, &mut self.flux_x);
+
+        reconstruct_slopes_y(&q.h, &mut q_sl_y.h);
+        reconstruct_slopes_y(&q.hu, &mut q_sl_y.hu);
+        reconstruct_slopes_y(&q.hv, &mut q_sl_y.hv);
+
+        //self.walls.apply_y_walls(&mut q.h, &mut q.hv, &mut q.hu);
+
+        calc_flux_vertical(q, q_sl_y, &mut self.flux_y);
+
+
+        let mask = self.wallsg.get_mask();
+        euler_step(&mut q.h, &self.flux_x.h, &self.flux_y.h, dt, mask);
+        euler_step(&mut q.hu, &self.flux_x.hu, &self.flux_y.hu, dt, mask);
+        euler_step(&mut q.hv, &self.flux_x.hv, &self.flux_y.hv, dt, mask);
+
+        //mask_field(&mut q.h, mask);
+        //mask_field(&mut q.hu, mask);
+        //mask_field(&mut q.hv, mask);
+
+        self.wallsg.apply_to_scalar_field(&mut q.h);
+        self.wallsg.apply_to_velocity_field(&mut q.hu, &mut q.hv);
+
+        /*dissipation(&mut q.h, &mut self.buffer, 0.1, dt);
+        dissipation(&mut q.hu, &mut self.buffer, 0.1, dt);
+        dissipation(&mut q.hv, &mut self.buffer, 0.1, dt);*/
+
+        /*match ctx.get_params().domain_boundary {
+            Boundary::Absorb => { self.open_bc(); },
+            Boundary::Slip => { self.wall_bc(); },
+            Boundary::NoSlip => { self.wall_bc(); },
+            Boundary::Tunnel => { self.tunnel_bc(); }
+        }*/
+
+        ctx.get_params().domain.apply_bcs(&mut q.h, &mut q.hu, &mut q.hv);
         
     }
 
     fn send_result(&self, ctx: &crate::simhandler::SimulationContext<Self::SimParams>) -> Self::SimRes {
         self.q.h.clone()
+    }
+}
+
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub enum FVBoundary {
+    #[default]
+    Wall,
+    Open,
+    Inlet(f64, f64)
+}
+
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct FVDomain {
+    pub top: FVBoundary,
+    pub bottom: FVBoundary,
+    pub left: FVBoundary,
+    pub right: FVBoundary
+}
+
+fn bot_neumann(u: &mut Array2<f64>) {
+    for i in 0..u.dim().0  {
+        u[[i,0]] = u[[i,1]];
+    }
+}
+
+fn top_neumann(u: &mut Array2<f64>) {
+    let y = u.dim().1 - 1;
+
+    for i in 0..u.dim().0  {
+        u[[i,y]] = u[[i,y-1]];
+    }
+}
+
+fn left_neumann(u: &mut Array2<f64>) {
+    for i in 0..u.dim().1 {
+        u[[0,i]] = u[[1,i]];
+    }
+}
+
+fn right_neumann(u: &mut Array2<f64>) {
+    let x = u.dim().0 - 1;
+    
+    for i in 0..u.dim().1 {
+        u[[x,i]] = u[[x-1,i]];
+    }
+}
+
+fn bot_reflect(u: &mut Array2<f64>) {
+    for i in 0..u.dim().0  {
+        u[[i,0]] = -u[[i,1]];
+    }
+}
+
+fn top_reflect(u: &mut Array2<f64>) {
+    let y = u.dim().1 - 1;
+
+    for i in 0..u.dim().0  {
+        u[[i,y]] = -u[[i,y-1]];
+    }
+}
+
+fn left_reflect(u: &mut Array2<f64>) {
+    for i in 0..u.dim().1 {
+        u[[0,i]] = -u[[1,i]];
+    }
+}
+
+fn right_reflect(u: &mut Array2<f64>) {
+    let x = u.dim().0 - 1;
+    
+    for i in 0..u.dim().1 {
+        u[[x,i]] = -u[[x-1,i]];
+    }
+}
+
+fn bot_fixed(u: &mut Array2<f64>, v: f64) {
+    for i in 0..u.dim().0  {
+        u[[i,0]] = v;
+    }
+}
+
+fn top_fixed(u: &mut Array2<f64>, v: f64) {
+    let y = u.dim().1 - 1;
+
+    for i in 0..u.dim().0  {
+        u[[i,y]] = v;
+    }
+}
+
+fn left_fixed(u: &mut Array2<f64>, v: f64) {
+    for i in 0..u.dim().1 {
+        u[[0,i]] = v;
+    }
+}
+
+fn right_fixed(u: &mut Array2<f64>, v: f64) {
+    let x = u.dim().0 - 1;
+    
+    for i in 0..u.dim().1 {
+        u[[x,i]] = v;
+    }
+}
+
+impl FVDomain {
+    fn apply_bcs(&self,h: &mut Array2<f64>, hu: &mut Array2<f64>, hv: &mut Array2<f64>) {
+        match self.top {
+            FVBoundary::Wall => {
+                top_neumann(h);
+                top_reflect(hv);
+                top_neumann(hu);
+            },
+            FVBoundary::Open => {
+                top_neumann(h);
+                top_neumann(hu);
+                top_neumann(hv);
+            },
+            FVBoundary::Inlet(h0, u0) => {
+                top_fixed(h, h0);
+                top_neumann(hu);
+                top_fixed(hv, u0);
+            },
+        }
+
+        match self.bottom {
+            FVBoundary::Wall => {
+                bot_neumann(h);
+                bot_reflect(hv);
+                bot_neumann(hu);
+            },
+            FVBoundary::Open => {
+                bot_neumann(h);
+                bot_neumann(hu);
+                bot_neumann(hv);
+            },
+            FVBoundary::Inlet(h0, u0) => {
+                bot_fixed(h, h0);
+                bot_neumann(hu);
+                bot_fixed(hv, u0);
+            },
+        }
+
+        match self.left {
+            FVBoundary::Wall => {
+                left_neumann(h);
+                left_reflect(hu);
+                left_neumann(hv);
+            },
+            FVBoundary::Open => {
+                left_neumann(h);
+                left_neumann(hu);
+                left_neumann(hv);
+            },
+            FVBoundary::Inlet(h0, u0) => {
+                left_fixed(h, h0);
+                left_neumann(hv);
+                left_fixed(hu, u0);
+            },
+        }
+
+        match self.right {
+            FVBoundary::Wall => {
+                right_neumann(h);
+                right_reflect(hu);
+                right_neumann(hv);
+            },
+            FVBoundary::Open => {
+                right_neumann(h);
+                right_neumann(hu);
+                right_neumann(hv);
+            },
+            FVBoundary::Inlet(h0, u0) => {
+                right_fixed(h, h0);
+                right_neumann(hv);
+                right_fixed(hu, u0);
+            },
+        }
+    }
+
+}
+
+#[derive(Default)]
+struct WallCell {
+    cell: (usize, usize),
+    dir: i32
+}
+
+#[derive(Default)]
+struct FVGridWalls {
+    mask: Array2<f64>,
+    x_walls: Vec<WallCell>,
+    y_walls: Vec<WallCell>
+}
+
+impl FVGridWalls {
+    pub fn new(dim: (usize, usize)) -> Self {
+        Self { 
+            mask: Array2::<f64>::zeros(dim), 
+            x_walls: Default::default(), 
+            y_walls: Default::default()
+        }
+    }
+
+    pub fn from_mask(mask: &Array2<u8>) -> Self {
+        let mut S = Self::default();
+        S.precalculate_setup(mask);
+        S
+    }
+
+    pub fn set_mask(&mut self, mask: &Array2<u8>) {
+        self.precalculate_setup(mask);
+    }
+
+    pub fn get_mask(&self) -> &Array2<f64> {
+        &self.mask
+    }
+
+    fn precalculate_setup(&mut self, input_mask: &Array2<u8>) {
+        let (dimx, dimy) = input_mask.dim();
+
+        let mut mask = Array2::<f64>::zeros((dimx, dimy));
+
+        let mask_s = input_mask.slice(s![1..-1,1..-1]);
+        
+        self.x_walls = Default::default();
+        self.y_walls = Default::default();
+
+        mask_s.indexed_iter().for_each(|((i_f, j_f), m)| {
+            let (i, j) = (i_f + 1, j_f + 1);
+
+            mask[[i,j]] = if *m > 0 { 0.0 } else { 1.0 };
+
+            if *m > 0 {
+                if input_mask[[i-1,j]] == 0 {
+                    self.x_walls.push(WallCell { cell: (i,j), dir: -1 });
+                }
+                if input_mask[[i+1,j]] == 0 {
+                    self.x_walls.push(WallCell { cell: (i,j), dir: 1 });
+                }
+                if input_mask[[i,j-1]] == 0 {
+                    self.y_walls.push(WallCell { cell: (i,j), dir: -1 });
+                }
+                if input_mask[[i,j+1]] == 0 {
+                    self.y_walls.push(WallCell { cell: (i,j), dir: 1 });
+                }
+            }
+        });
+
+        self.mask = mask;
+    }
+
+    fn apply_x_walls(&self, h: &mut Array2<f64>, hu: &mut Array2<f64>, hv: &mut Array2<f64>) {
+        self.x_walls.iter().for_each(|cell| {
+            let (i, j) = cell.cell;
+            let dir = cell.dir;
+
+            let i_new = (i as i32 + dir) as usize;
+
+            //h[[i_new, j]] = h[[i_new,j]].max(0.01);
+            h[[i,j]] = h[[i_new,j]];
+            hu[[i,j]] = -1. * hu[[i_new,j]];
+            //hu[[i,j]] = 0.;
+            hv[[i,j]] = hv[[i_new,j]];
+            //hv[[i,j]] = 0.;
+        });
+    } 
+
+    fn apply_y_walls(&self, h: &mut Array2<f64>, hv: &mut Array2<f64>, hu: &mut Array2<f64>) {
+        self.y_walls.iter().for_each(|cell| {
+            let (i, j) = cell.cell;
+            let dir = cell.dir;
+
+            let j_new = (j as i32 + dir) as usize;
+
+            //h[[i,j_new]] = h[[i,j_new]].max(0.01);
+            h[[i,j]] = h[[i, j_new]];
+            hv[[i,j]] = -1. * hv[[i, j_new]];
+            //hv[[i,j]] = 0.;
+            hu[[i,j]] = hu[[i, j_new]];
+            //hu[[i,j]] = 0.;
+        });
+    }
+}
+
+impl From<Array2<u8>> for FVGridWalls {
+    fn from(value: Array2<u8>) -> Self {
+        Self::from_mask(&value)
     }
 }

@@ -1,5 +1,5 @@
 use num::{self, Integer, Float};
-use ndarray::Array2;
+use ndarray::{s, Array2};
 
 pub type MaskBuilderU8 = MaskBuilder<u8>;
 pub struct MaskBuilder<T: Integer + Clone> {
@@ -339,5 +339,97 @@ impl<T: num::Float> FieldBuilder<T> {
             *v = *v + f((i, j));
         }
         self
+    }
+}
+
+#[derive(Default)]
+struct NeumannCell {
+    cell: (usize, usize),
+    //clockwise from top
+    interp_cof: [f64; 4]
+}
+
+#[derive(Default)]
+struct FDWalls {
+    mask: Array2<f64>,
+    neum_cells: Vec<NeumannCell>,
+    dir_cells: Vec<(usize, usize)>
+}
+
+impl FDWalls {
+    pub fn new(dimx: usize, dimy: usize) -> Self {
+        Self { mask: Array2::<f64>::zeros((dimx, dimy)), dir_cells: Default::default(), neum_cells: Default::default()}
+    }
+
+    pub fn from_mask(mask: &Array2<u8>) -> Self {
+        let mut s = Self::default();
+        s.precalculate_setup(mask);
+        s
+    }
+
+    pub fn change_mask(&mut self, mask: &Array2<u8>) {
+        self.precalculate_setup(mask);
+    }
+
+    pub fn get_mask(&self) -> &Array2<f64> { &self.mask}
+
+    fn precalculate_setup(&mut self, input_mask: &Array2<u8>) {
+        let (dimx, dimy) = input_mask.dim();
+
+        let mut mask = Array2::<f64>::zeros((dimx, dimy));
+
+        //1 - wall, 0 - fluid
+        let mask_s = input_mask.slice(s![1..-1,1..-1]);
+
+        self.neum_cells = Default::default();
+        self.dir_cells = Default::default();
+
+        mask_s.indexed_iter().for_each(|((i_f,j_f), m)| {
+            let (i, j) = (i_f + 1, j_f + 1);
+            mask[[i,j]] = if *m > 0 { 0.0 } else { 1.0 };  
+
+            //fluid cells count as one, used for counting up fluid cells
+            let u = if input_mask[[i,j+1]] > 0 { 0.0 } else {1.0};
+            let r = if input_mask[[i+1,j]] > 0 { 0.0 } else {1.0};
+            let l = if input_mask[[i-1,j]] > 0 { 0.0 } else {1.0};
+            let d = if input_mask[[i,j-1]] > 0 { 0.0 } else {1.0};
+            
+            if *m == 2 {
+                let sum: f64 = u + r + d + l;
+
+                //create the normalized list
+                let n = sum;
+                let coffs = [u / n, r / n, d / n, l / n];
+                
+                //push it into the vector of neumann
+                let cell = NeumannCell { cell: (i,j), interp_cof: coffs};
+
+                if sum > 0.1 { self.neum_cells.push(cell); };
+            }
+            else if *m == 1 {
+                let sum = u + r +d + l;
+
+                if sum > 0.1 {self.dir_cells.push((i,j));}
+            }
+        });
+
+        self.mask = mask;
+    }
+
+    pub fn apply_neumann(&self, u: &mut Array2<f64>) {
+        self.neum_cells.iter().for_each(|cell| {
+            let (i, j) = cell.cell;
+
+            let [up, r, d, l] = cell.interp_cof;
+
+            u[[i,j]] = up * u[[i,j+1]] + r * u[[i+1,j]] + d * u[[i,j-1]] + l * u[[i-1,j]];
+
+        });
+    }
+
+    pub fn apply_dirichlet(&self, u: &mut Array2<f64>, val: f64) {
+        self.dir_cells.iter().for_each(|(i,j)| {
+            u[[*i,*j]] = val;
+        });
     }
 }
