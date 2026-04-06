@@ -1,0 +1,27 @@
+{
+  "dimensions": [
+    600,
+    600
+  ],
+  "dt": 0.1,
+  "domain": {
+    "top": "Wall",
+    "bottom": "Wall",
+    "left": "Wall",
+    "right": "Wall"
+  },
+  "geometry": {
+    "shapes": []
+  },
+  "data": {
+    "h": {
+      "LevelSet": 1.0
+    },
+    "hu": {
+      "LevelSet": 0.0
+    },
+    "hv": {
+      "LevelSet": 0.0
+    }
+  }
+}

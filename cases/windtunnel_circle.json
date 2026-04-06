@@ -1,0 +1,42 @@
+{
+  "dimensions": [
+    600,
+    600
+  ],
+  "dt": 0.08,
+  "domain": {
+    "top": "Open",
+    "bottom": "Open",
+    "left": {
+      "Inlet": [
+        0.31,
+        0.45
+      ]
+    },
+    "right": "Open"
+  },
+  "geometry": {
+    "shapes": [
+      {
+        "Circle": {
+          "position": [
+            300.0,
+            300.0
+          ],
+          "radius": 45.1
+        }
+      }
+    ]
+  },
+  "data": {
+    "h": {
+      "LevelSet": 0.04
+    },
+    "hu": {
+      "LevelSet": 0.0
+    },
+    "hv": {
+      "LevelSet": 0.0
+    }
+  }
+}

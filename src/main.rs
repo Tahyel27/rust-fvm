@@ -50,10 +50,10 @@ impl App {
         //simulation set up
 
         let h = FieldBuilder::new(dims)
-            .set(0.05)
+            .set(0.1)
             //.add_gaussian((300., 300.), 40. , 0.8)
-            //.add_rectangle((0,0), (dims.0,dims.0/6), 0.8)
-            //.add_rectangle((0,0), (dims.1/6,dims.1), 0.8)
+            .add_rectangle((0,0), (dims.0,dims.0/6), 0.8)
+            .add_rectangle((0,0), (dims.1/6,dims.1), 0.8)
             .field();
 
         let u = FieldBuilder::new(dims).set(0.0).field();
@@ -66,9 +66,9 @@ impl App {
             .mask();
 
         let mut geometry = FVGeometry::new();
-        geometry.add_circle((100.,300.), 5.1);
+        //geometry.add_circle((100.,300.), 5.1);
         //geometry.add_circle((300.,300.), 20.1);
-        geometry.add_circle((350.,300.), 100.1);
+        //geometry.add_circle((350.,300.), 100.1);
         //geometry.add_expanded_polygon(vec![(200.1,300.).into(), (400.1,250.).into(), (400.,350.).into()],20.5);
         //geometry.add_beveled_rect((200.1,270.1), (400.1,329.9), 20.);
         //geometry.add_polygon(vec![(20.,40.).into(), (500., 200.).into(), (400.,400.).into(), (50.,100.).into()]);
@@ -79,10 +79,11 @@ impl App {
         
         let mut params = FVParams::default();
         params.domain = FVDomain {
-            top: FVBoundary::Open,
-            bottom: FVBoundary::Open,
-            left: FVBoundary::Inlet(0.31, 0.4),
-            right: FVBoundary::Open
+            top: FVBoundary::Wall,
+            bottom: FVBoundary::Wall,
+            //left: FVBoundary::Inlet(0.31, 0.4),
+            left: FVBoundary::Wall,
+            right: FVBoundary::Wall
         };
 
         let sim = SimulationHandler::new(case, params.clone());
@@ -113,11 +114,16 @@ impl App {
     }
 
     fn save_file(&mut self) {
+
+        self.sim.pause();
+        
         let file = FileDialog::new()
             .add_filter("JSON simulation config", &["json"])
             .save_file();
 
         if let Some(file) = file {
+
+            self.sim.resume();
             
             let (tx, rx) = mpsc::channel();
 
@@ -127,27 +133,32 @@ impl App {
 
             let received = rx.recv_timeout(Duration::from_secs(1));
 
-            self.sim.pause();
-
             if let Ok(data) = received {
                 save_to_file_sw(&file, data, self.params.dt, self.params.domain.clone(), &self.geometry).unwrap();
             }
         }
     }
 
-    fn open_simulation(&mut self) {
+    fn open_simulation(&mut self, ctx: &egui::Context) {
+
+        self.sim.pause();
+
         let file = FileDialog::new()
             .add_filter("JSON simulation config", &["json"])
             .pick_file();
 
         if let Some(file) = file {
-            let (case, params) = open_case_sw(&file).unwrap();
+            let (case, params, mask) = open_case_sw(&file).unwrap();
+
+            self.heatmap.set_mask(&mask, ctx);
 
             self.sim.set_data(case);
             self.sim.set_params(params.clone());
 
             self.params = params;
-        }   
+        }
+
+        self.sim.resume();   
     }
 }
 
@@ -226,7 +237,7 @@ impl eframe::App for App {
                         self.save_file();
                     }
                     if ui.add_sized([width, 20.], egui::Button::new("Open simulation")).clicked() {
-                        self.open_simulation();
+                        self.open_simulation(ui.ctx());
                     }
                 })
 

@@ -190,7 +190,7 @@ pub fn save_windtunnel_case() {
     file.write_all(string.as_bytes()).unwrap();
 }
 
-pub fn open_case_sw(path: &Path) -> Result<(FVData, FVParams), std::io::Error> {
+pub fn open_case_sw(path: &Path) -> Result<(FVData, FVParams, Array2<u8>), std::io::Error> {
     let mut file = OpenOptions::new()
         .read(true)
         .open(path)?;
@@ -207,6 +207,8 @@ pub fn open_case_sw(path: &Path) -> Result<(FVData, FVParams), std::io::Error> {
     
     let geometry = save.geometry.to_fv();
 
+    let mask = geometry.create_mask(dim);
+
     let case = FVData::new_case_geom(
         save.data.h.to_ndarray(dim),
         save.data.hu.to_ndarray(dim), 
@@ -219,6 +221,6 @@ pub fn open_case_sw(path: &Path) -> Result<(FVData, FVParams), std::io::Error> {
         domain: domain
     };
 
-    Ok((case, params))
+    Ok((case, params, mask))
 
 }
