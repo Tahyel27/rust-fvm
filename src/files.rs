@@ -1,6 +1,6 @@
 use std::{fs::OpenOptions, io::{Read, Write}, path::Path};
 
-use crate::{FVGeometry, fv::{Boundary, FVBoundary, FVData, FVDomain, FVFields, FVParams}, fvgeometry};
+use crate::{FVGeometry, fv::{FVBoundary, FVData, FVDomain, FVFields, FVParams}, fvgeometry};
 use crate::fvgeometry::FVShape;
 use ndarray::Array2;
 use serde::{Deserialize, Serialize};
@@ -216,7 +216,6 @@ pub fn open_case_sw(path: &Path) -> Result<(FVData, FVParams), std::io::Error> {
 
     let params = FVParams {
         dt: save.dt,
-        domain_boundary: Boundary::Absorb,
         domain: domain
     };
 

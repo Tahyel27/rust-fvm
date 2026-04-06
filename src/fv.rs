@@ -4,17 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::{fvgeometry::{FVGeometry, FVWalls}, simhandler::SimulationData};
 
 #[derive(Clone)]
-pub enum Boundary {
-    Absorb,
-    Slip,
-    NoSlip,
-    Tunnel
-}
-
-#[derive(Clone)]
 pub struct FVParams {
     pub dt: f64,
-    pub domain_boundary: Boundary,
     pub domain: FVDomain
 }
 
@@ -40,13 +31,12 @@ pub struct FVData {
     flux_x: FVFields,
     flux_y: FVFields,
     buffer: Array2<f64>,
-    walls: FVGridWalls,
-    wallsg: FVWalls
+    geometry: FVWalls
 }
 
 impl Default for FVParams {
     fn default() -> Self {
-        Self { dt: 0.1, domain_boundary: Boundary::Tunnel, domain: Default::default() }
+        Self { dt: 0.1, domain: Default::default() }
     }
 }
 
@@ -61,8 +51,7 @@ impl FVData {
             flux_x: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             buffer: z.clone(),
-            walls: Default::default(),
-            wallsg: Default::default()
+            geometry: Default::default()
         }
     }
 
@@ -76,15 +65,14 @@ impl FVData {
             flux_x: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             buffer: z.clone(),
-            walls: mask.into(),
-            wallsg: Default::default()
+            geometry: Default::default()
         }
     }
 
     pub fn new_case_geom(h: Array2<f64>, hu: Array2<f64>, hv: Array2<f64>, geometry: FVGeometry) -> Self {
         let z = Array2::<f64>::zeros(h.dim());
 
-        let wallsg = FVWalls::new(geometry, z.dim());
+        let geometry = FVWalls::new(geometry, z.dim());
 
         Self {
             q: FVFields { h, hu, hv },
@@ -93,8 +81,7 @@ impl FVData {
             flux_x: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             flux_y: FVFields { h: z.clone(), hu: z.clone(), hv: z.clone() },
             buffer: z.clone(),
-            walls: Default::default(),
-            wallsg: wallsg
+            geometry
         }
     }
 
@@ -113,88 +100,6 @@ impl FVData {
     }
 
     pub fn dim(&self) -> (usize, usize) {self.q.h.dim()}
-
-    fn wall_bc(&mut self) {
-        let (dimx, dimy) = self.q.h.dim();
-        
-        let mx = dimx - 1;
-        let my = dimy - 1;
-        //left/right edge
-        for i in 0..dimy {
-            self.q.h[[0,i]] = self.q.h[[1,i]];
-            self.q.hv[[0,i]] = self.q.hv[[1,i]];
-            self.q.hu[[0,i]] = -1. * self.q.hu[[1,i]];
-
-            self.q.h[[mx,i]] = self.q.h[[mx-1,i]];
-            self.q.hu[[mx,i]] = -1. * self.q.hu[[mx-1,i]];
-            self.q.hv[[mx,i]] = self.q.hv[[mx-1,i]];
-        }
-
-        for i in 0..dimx {
-            self.q.h[[i,0]] = self.q.h[[i,1]];
-            self.q.hu[[i,0]] = self.q.hu[[i,1]];
-            self.q.hv[[i,0]] = -1. * self.q.hv[[i,1]];
-
-            self.q.h[[i,my]] = self.q.h[[i,my-1]];
-            self.q.hu[[i,my]] = self.q.hu[[i,my-1]];
-            self.q.hv[[i,my]] = -1. * self.q.hv[[i,my-1]];
-        }
-
-    }
-
-    fn open_bc(&mut self) {
-        let (dimx, dimy) = self.q.h.dim();
-        
-        let mx = dimx - 1;
-        let my = dimy - 1;
-        //left/right edge
-        for i in 0..dimy {
-            self.q.h[[0,i]] = self.q.h[[1,i]];
-            self.q.hv[[0,i]] = self.q.hv[[1,i]];
-            self.q.hu[[0,i]] = self.q.hu[[1,i]];
-
-            self.q.h[[mx,i]] = self.q.h[[mx-1,i]];
-            self.q.hu[[mx,i]] = self.q.hu[[mx-1,i]];
-            self.q.hv[[mx,i]] = self.q.hv[[mx-1,i]];
-        }
-
-        for i in 0..dimx {
-            self.q.h[[i,0]] = self.q.h[[i,1]];
-            self.q.hu[[i,0]] = self.q.hu[[i,1]];
-            self.q.hv[[i,0]] = self.q.hv[[i,1]];
-
-            self.q.h[[i,my]] = self.q.h[[i,my-1]];
-            self.q.hu[[i,my]] = self.q.hu[[i,my-1]];
-            self.q.hv[[i,my]] = self.q.hv[[i,my-1]];
-        }
-    }
-
-    fn tunnel_bc(&mut self) {
-        let (dimx, dimy) = self.q.h.dim();
-        
-        let mx = dimx - 1;
-        let my = dimy - 1;
-        //left/right edge
-        for i in 0..dimy {
-            self.q.h[[0,i]] = self.q.h[[1,i]];
-            self.q.hv[[0,i]] = self.q.hv[[1,i]];
-            self.q.hu[[0,i]] = 0.5;
-
-            self.q.h[[mx,i]] = self.q.h[[mx-1,i]];
-            self.q.hu[[mx,i]] = self.q.hu[[mx-1,i]];
-            self.q.hv[[mx,i]] = self.q.hv[[mx-1,i]];
-        }
-
-        for i in 0..dimx {
-            self.q.h[[i,0]] = self.q.h[[i,1]];
-            self.q.hu[[i,0]] = self.q.hu[[i,1]];
-            self.q.hv[[i,0]] = self.q.hv[[i,1]];
-
-            self.q.h[[i,my]] = self.q.h[[i,my-1]];
-            self.q.hu[[i,my]] = self.q.hu[[i,my-1]];
-            self.q.hv[[i,my]] = self.q.hv[[i,my-1]];
-        }
-    }
 
 }
 
@@ -507,7 +412,7 @@ impl SimulationData for FVData {
         calc_flux_vertical(q, q_sl_y, &mut self.flux_y);
 
 
-        let mask = self.wallsg.get_mask();
+        let mask = self.geometry.get_mask();
         euler_step(&mut q.h, &self.flux_x.h, &self.flux_y.h, dt, mask);
         euler_step(&mut q.hu, &self.flux_x.hu, &self.flux_y.hu, dt, mask);
         euler_step(&mut q.hv, &self.flux_x.hv, &self.flux_y.hv, dt, mask);
@@ -516,19 +421,12 @@ impl SimulationData for FVData {
         //mask_field(&mut q.hu, mask);
         //mask_field(&mut q.hv, mask);
 
-        self.wallsg.apply_to_scalar_field(&mut q.h);
-        self.wallsg.apply_to_velocity_field(&mut q.hu, &mut q.hv);
+        self.geometry.apply_to_scalar_field(&mut q.h);
+        self.geometry.apply_to_velocity_field(&mut q.hu, &mut q.hv);
 
         /*dissipation(&mut q.h, &mut self.buffer, 0.1, dt);
         dissipation(&mut q.hu, &mut self.buffer, 0.1, dt);
         dissipation(&mut q.hv, &mut self.buffer, 0.1, dt);*/
-
-        /*match ctx.get_params().domain_boundary {
-            Boundary::Absorb => { self.open_bc(); },
-            Boundary::Slip => { self.wall_bc(); },
-            Boundary::NoSlip => { self.wall_bc(); },
-            Boundary::Tunnel => { self.tunnel_bc(); }
-        }*/
 
         ctx.get_params().domain.apply_bcs(&mut q.h, &mut q.hu, &mut q.hv);
         
@@ -720,107 +618,4 @@ impl FVDomain {
 struct WallCell {
     cell: (usize, usize),
     dir: i32
-}
-
-#[derive(Default)]
-struct FVGridWalls {
-    mask: Array2<f64>,
-    x_walls: Vec<WallCell>,
-    y_walls: Vec<WallCell>
-}
-
-impl FVGridWalls {
-    pub fn new(dim: (usize, usize)) -> Self {
-        Self { 
-            mask: Array2::<f64>::zeros(dim), 
-            x_walls: Default::default(), 
-            y_walls: Default::default()
-        }
-    }
-
-    pub fn from_mask(mask: &Array2<u8>) -> Self {
-        let mut S = Self::default();
-        S.precalculate_setup(mask);
-        S
-    }
-
-    pub fn set_mask(&mut self, mask: &Array2<u8>) {
-        self.precalculate_setup(mask);
-    }
-
-    pub fn get_mask(&self) -> &Array2<f64> {
-        &self.mask
-    }
-
-    fn precalculate_setup(&mut self, input_mask: &Array2<u8>) {
-        let (dimx, dimy) = input_mask.dim();
-
-        let mut mask = Array2::<f64>::zeros((dimx, dimy));
-
-        let mask_s = input_mask.slice(s![1..-1,1..-1]);
-        
-        self.x_walls = Default::default();
-        self.y_walls = Default::default();
-
-        mask_s.indexed_iter().for_each(|((i_f, j_f), m)| {
-            let (i, j) = (i_f + 1, j_f + 1);
-
-            mask[[i,j]] = if *m > 0 { 0.0 } else { 1.0 };
-
-            if *m > 0 {
-                if input_mask[[i-1,j]] == 0 {
-                    self.x_walls.push(WallCell { cell: (i,j), dir: -1 });
-                }
-                if input_mask[[i+1,j]] == 0 {
-                    self.x_walls.push(WallCell { cell: (i,j), dir: 1 });
-                }
-                if input_mask[[i,j-1]] == 0 {
-                    self.y_walls.push(WallCell { cell: (i,j), dir: -1 });
-                }
-                if input_mask[[i,j+1]] == 0 {
-                    self.y_walls.push(WallCell { cell: (i,j), dir: 1 });
-                }
-            }
-        });
-
-        self.mask = mask;
-    }
-
-    fn apply_x_walls(&self, h: &mut Array2<f64>, hu: &mut Array2<f64>, hv: &mut Array2<f64>) {
-        self.x_walls.iter().for_each(|cell| {
-            let (i, j) = cell.cell;
-            let dir = cell.dir;
-
-            let i_new = (i as i32 + dir) as usize;
-
-            //h[[i_new, j]] = h[[i_new,j]].max(0.01);
-            h[[i,j]] = h[[i_new,j]];
-            hu[[i,j]] = -1. * hu[[i_new,j]];
-            //hu[[i,j]] = 0.;
-            hv[[i,j]] = hv[[i_new,j]];
-            //hv[[i,j]] = 0.;
-        });
-    } 
-
-    fn apply_y_walls(&self, h: &mut Array2<f64>, hv: &mut Array2<f64>, hu: &mut Array2<f64>) {
-        self.y_walls.iter().for_each(|cell| {
-            let (i, j) = cell.cell;
-            let dir = cell.dir;
-
-            let j_new = (j as i32 + dir) as usize;
-
-            //h[[i,j_new]] = h[[i,j_new]].max(0.01);
-            h[[i,j]] = h[[i, j_new]];
-            hv[[i,j]] = -1. * hv[[i, j_new]];
-            //hv[[i,j]] = 0.;
-            hu[[i,j]] = hu[[i, j_new]];
-            //hu[[i,j]] = 0.;
-        });
-    }
-}
-
-impl From<Array2<u8>> for FVGridWalls {
-    fn from(value: Array2<u8>) -> Self {
-        Self::from_mask(&value)
-    }
 }
